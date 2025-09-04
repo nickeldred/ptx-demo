@@ -1,4 +1,4 @@
-name: Build Test and Push to AWS ECR
+name: AWS CI/CD Pipeline
 on:
   push:
     branches:
