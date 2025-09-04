@@ -68,15 +68,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker load -i dist/${IMAGE_NAME}.tar
+          docker load -i "dist/${IMAGE_NAME}.tar"
           REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
           SHORT_SHA="${GITHUB_SHA::7}"
-          # tag we decided to use for deployment
-          TAG="${DEPLOY_TAG/sha-/${SHORT_SHA}}"
-          # If DEPLOY_TAG is literal "latest", preserve that
-          if [[ "${DEPLOY_TAG}" == "latest" ]]; then TAG="latest"; fi
-          echo "REPO_URI=${REPO_URI}" >> $GITHUB_ENV
-          echo "TAG=${TAG}" >> $GITHUB_ENV
+          # Decide the deploy tag
+          if [[ "${DEPLOY_TAG}" == "latest" ]]; then
+            TAG="latest"
+          else
+            TAG="sha-${SHORT_SHA}"
+          fi
+          echo "REPO_URI=${REPO_URI}" >> "$GITHUB_ENV"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          # Tag the local image
           docker tag "${IMAGE_NAME}:build" "${REPO_URI}:latest"
           docker tag "${IMAGE_NAME}:build" "${REPO_URI}:sha-${SHORT_SHA}"
       - name: Push to ECR
