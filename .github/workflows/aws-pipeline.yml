@@ -54,12 +54,16 @@ jobs:
       # --- Security: Python dependency audit ---
       - name: Python dependency audit (pip-audit)
         run: |
-          python -m pip install --upgrade pip
-          pip install pip-audit
+          set -euo pipefail
           if [ -f requirements.txt ]; then
+            python -m venv .venv
+            . .venv/bin/activate
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install pip-audit
             pip-audit -r requirements.txt
           else
-            pip-audit
+            echo "No requirements.txt found; skipping pip-audit."
           fi
       # --- Security: Python code scan ---
       - name: Bandit (Python SAST)
