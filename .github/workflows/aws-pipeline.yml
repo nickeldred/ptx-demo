@@ -59,7 +59,7 @@ jobs:
         INSTANCE_ID: "i-0ab55c6ab619982bf"
         # set to "latest" or deploy the exact commit with: sha-${GITHUB_SHA::7}
         DEPLOY_TAG: "latest"
-        SECRETS_ARN: arn:aws:secretsmanager:us-east-1:872952850570:secret:farm-db-creds-cjOCQP
+        SECRET_ARN: arn:aws:secretsmanager:us-east-1:872952850570:secret:farm-db-creds-cjOCQP
       steps:
         - name: Configure AWS credentials (OIDC)
           uses: aws-actions/configure-aws-credentials@v4
@@ -80,7 +80,7 @@ jobs:
             # Make these values available inside the instance script
             AWS_REGION="${AWS_REGION}"
             AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
-            SECRET_ARN="${SECRETS_ARN}"
+            SECRET_ARN="${SECRET_ARN}"
             REPO_URI="${REPO_URI}"
             TAG="${TAG}"
             # Ensure jq exists
