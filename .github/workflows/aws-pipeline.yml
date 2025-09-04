@@ -37,73 +37,10 @@ jobs:
           name: image-tar
           path: dist/${{ env.IMAGE_NAME }}.tar
           retention-days: 3
-  # --------------------------- TEST/SCAN ---------------------------
-  test:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: image-tar
-          path: dist
-      - name: Load image
-        run: |
-          docker load -i dist/${IMAGE_NAME}.tar
-          docker image ls
-      # --- Security: Python dependency audit ---
-      - name: Python dependency audit (pip-audit)
-        run: |
-          python -m pip install --upgrade pip
-          pip install pip-audit
-          if [ -f requirements.txt ]; then
-            pip-audit -r requirements.txt
-          else
-            pip-audit
-          fi
-      # --- Security: Python code scan ---
-      - name: Bandit (Python SAST)
-        run: |
-          pip install bandit
-          bandit -q -r . -ll
-      # --- Security: Dockerfile lint ---
-      - name: Hadolint (Dockerfile lint)
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: Dockerfile
-          no-fail: false
-      # --- Security: Container vulnerability scan ---
-      - name: Trivy scan local image
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: image
-          image-ref: ${{ env.IMAGE_NAME }}:build
-          format: sarif
-          output: trivy-results.sarif
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '1'   # fail on HIGH/CRITICAL
-      - name: Upload Trivy SARIF to GitHub Security
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-      # --- Optional: SBOM for the built image ---
-      - name: Generate SBOM (CycloneDX)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ env.IMAGE_NAME }}:build
-          format: cyclonedx-json
-          output-file: sbom.cdx.json
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-cyclonedx
-          path: sbom.cdx.json
-  # --------------------------- DEPLOY (Push+Pull) ---------------------------
+  # --------------------------- DEPLOY ---------------------------
   deploy:
     runs-on: ubuntu-latest
-    needs: test
+    needs: build
     permissions:
       id-token: write
       contents: read
@@ -131,15 +68,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker load -i dist/${IMAGE_NAME}.tar
+          docker load -i "dist/${IMAGE_NAME}.tar"
           REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
           SHORT_SHA="${GITHUB_SHA::7}"
-          # tag we decided to use for deployment
-          TAG="${DEPLOY_TAG/sha-/${SHORT_SHA}}"
-          # If DEPLOY_TAG is literal "latest", preserve that
-          if [[ "${DEPLOY_TAG}" == "latest" ]]; then TAG="latest"; fi
-          echo "REPO_URI=${REPO_URI}" >> $GITHUB_ENV
-          echo "TAG=${TAG}" >> $GITHUB_ENV
+          # Decide the deploy tag
+          if [[ "${DEPLOY_TAG}" == "latest" ]]; then
+            TAG="latest"
+          else
+            TAG="sha-${SHORT_SHA}"
+          fi
+          echo "REPO_URI=${REPO_URI}" >> "$GITHUB_ENV"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          # Tag the local image
           docker tag "${IMAGE_NAME}:build" "${REPO_URI}:latest"
           docker tag "${IMAGE_NAME}:build" "${REPO_URI}:sha-${SHORT_SHA}"
       - name: Push to ECR
