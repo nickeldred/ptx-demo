@@ -74,10 +74,9 @@ jobs:
             TAG="${DEPLOY_TAG}"
             echo "Deploying ${REPO_URI}:${TAG} to ${INSTANCE_ID}"
             echo "Using secret: ${SECRET_ARN}"
-            # Build the script that will run ON the EC2 instance.
+            # Build the script that will run ON the EC2 instance
             CMDS=$(cat <<EOF
             set -euo pipefail
-            # Make these values available inside the instance script
             AWS_REGION="${AWS_REGION}"
             AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
             SECRET_ARN="${SECRET_ARN}"
@@ -87,34 +86,31 @@ jobs:
             if ! command -v jq >/dev/null 2>&1; then
               (sudo yum -y install jq || sudo dnf -y install jq) >/dev/null 2>&1 || true
             fi
-            # ECR login
-            aws ecr get-login-password --region "\${AWS_REGION}" \
-            | docker login --username AWS --password-stdin "\${AWS_ACCOUNT_ID}.dkr.ecr.\${AWS_REGION}.amazonaws.com"
+            # Login to ECR
+            aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             # Fetch DB creds from Secrets Manager
-            SECRET_JSON=\$(aws secretsmanager get-secret-value \
-            --region "\${AWS_REGION}" \
-            --secret-id "\${SECRET_ARN}" \
-            --query SecretString --output text)
-            DB_USER=\$(echo "\$SECRET_JSON" | jq -r .username)
-            DB_PASS=\$(echo "\$SECRET_JSON" | jq -r .password)
-            DB_HOST=\$(echo "\$SECRET_JSON" | jq -r .host)
-            # Pull image and restart container
-            docker pull "\${REPO_URI}:\${TAG}"
+            SECRET_JSON=$(aws secretsmanager get-secret-value --region "${AWS_REGION}" --secret-id "${SECRET_ARN}" --query SecretString --output text)
+            DB_USER=$(echo "$SECRET_JSON" | jq -r .username)
+            DB_PASS=$(echo "$SECRET_JSON" | jq -r .password)
+            DB_HOST=$(echo "$SECRET_JSON" | jq -r .host)
+            # Pull new image and restart container
+            docker pull "${REPO_URI}:${TAG}"
             docker rm -f ptx-demo || true
             docker run -d --name ptx-demo --restart unless-stopped -p 5000:80 \
-            -e DB_HOST="\$DB_HOST" \
-            -e DB_USER="\$DB_USER" \
-            -e DB_PASS="\$DB_PASS" \
-            -e DB_NAME="farm" \
-            "\${REPO_URI}:\${TAG}"
+            -e DB_HOST="$DB_HOST" -e DB_USER="$DB_USER" -e DB_PASS="$DB_PASS" -e DB_NAME="farm" \
+            "${REPO_URI}:${TAG}"
             EOF
             )
-            # Send to SSM
+            # Wrap the multi-line script into proper JSON for --parameters
+            PARAMS_JSON=$(jq -Rn --arg c "$CMDS" '{commands: [$c]}')
+            # Send command (note --cli-binary-format)
             CMD_ID=$(aws ssm send-command \
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy ptx-demo with Secrets Manager env" \
-            --parameters commands="$CMDS" \
+            --parameters "$PARAMS_JSON" \
+            --cli-binary-format raw-in-base64-out \
             --query "Command.CommandId" --output text)
             echo "CommandId=$CMD_ID"
             # Poll for completion
