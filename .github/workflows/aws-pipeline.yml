@@ -80,7 +80,7 @@ jobs:
             # Make these values available inside the instance script
             AWS_REGION="${AWS_REGION}"
             AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
-            SECRET_ARN="${SECRET_ARN}"
+            SECRET_ARN="${SECRETS_ARN}"
             REPO_URI="${REPO_URI}"
             TAG="${TAG}"
             # Ensure jq exists
