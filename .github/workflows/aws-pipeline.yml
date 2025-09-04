@@ -1,57 +1,57 @@
+---
 name: Build Test and Push to AWS ECR
-
 on:
   push:
-    branches: [ "main" ]
-
+    branches:
+      - main
 permissions:
-  id-token: write      # required for OIDC
+  id-token: write
   contents: read
-
 env:
   AWS_REGION: us-east-1
   AWS_ACCOUNT_ID: 872952850570
   ECR_REPO: ptx-demo
   IMAGE_NAME: ptx-demo
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::872952850570:role/GitHubActionsECRPush
           aws-region: ${{ env.AWS_REGION }}
-
       - name: Ensure ECR repo exists (idempotent)
-        run: |
-          aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null 2>&1 || \
-          aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true
+        run: >
+          aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null
+          2>&1 || \
 
+          aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
-
       - name: Build Docker image
         run: |
           docker build -t $IMAGE_NAME:latest .
-
       - name: Tag image
-        run: |
-          REPO_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}
-          GIT_SHA_SHORT=${{ github.sha }} # full SHA here
-          GIT_SHA_SHORT=${GIT_SHA_SHORT::7} # shorten to 7
-          echo "REPO_URI=$REPO_URI" >> $GITHUB_ENV
-          echo "GIT_SHA_SHORT=$GIT_SHA_SHORT" >> $GITHUB_ENV
-          docker tag $IMAGE_NAME:latest $REPO_URI:latest
-          docker tag $IMAGE_NAME:latest $REPO_URI:sha-$GIT_SHA_SHORT
+        run: >
+          REPO_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION
+          }}.amazonaws.com/${{ env.ECR_REPO }}
 
-     - name: Push to ECR
+          GIT_SHA_SHORT=${{ github.sha }} # full SHA here
+
+          GIT_SHA_SHORT=${GIT_SHA_SHORT::7} # shorten to 7
+
+          echo "REPO_URI=$REPO_URI" >> $GITHUB_ENV
+
+          echo "GIT_SHA_SHORT=$GIT_SHA_SHORT" >> $GITHUB_ENV
+
+          docker tag $IMAGE_NAME:latest $REPO_URI:latest
+
+          docker tag $IMAGE_NAME:latest $REPO_URI:sha-$GIT_SHA_SHORT
+      - name: Push to ECR
         run: |
           docker push "$REPO_URI:latest"
           docker push "$REPO_URI:sha-$GIT_SHA_SHORT"
