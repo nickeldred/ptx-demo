@@ -1,4 +1,3 @@
----
 name: Build Test and Push to AWS ECR
 on:
   push:
@@ -18,6 +17,54 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::872952850570:role/GitHubActionsECRPush
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Ensure ECR repo exists (idempotent)
+        run: >
+          aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null
+          2>&1 || \
+          aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_NAME:latest .
+      - name: Push to ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+          GIT_SHA_SHORT="${GITHUB_SHA::7}"
+          echo "Using REPO_URI=$REPO_URI"
+          docker tag "$IMAGE_NAME:latest" "$REPO_URI:latest"
+          docker tag "$IMAGE_NAME:latest" "$REPO_URI:sha-$GIT_SHA_SHORT"
+          docker push "$REPO_URI:latest"
+          docker push "$REPO_URI:sha-$GIT_SHA_SHORT"
+  deploy:
+      needs: build-push
+      runs-on: ubuntu-latest
+      permissions:
+        id-token: write
+        contents: read
+      env:
+        AWS_REGION: us-east-1
+        AWS_ACCOUNT_ID: "872952850570"
+        ECR_REPO: ptx-demo
+        IMAGE_NAME: ptx-demo
+        INSTANCE_ID: "i-0ab55c6ab619982bf"
+        # set to "latest" or deploy the exact commit with: sha-${GITHUB_SHA::7}
+        DEPLOY_TAG: "latest"
+        SECRET_ARN: arn:aws:secretsmanager:us-east-1:872952850570:secret:farm-db-creds-cjOCQP
+      steps:
+        - name: Configure AWS credentials (OIDC)
+          uses: aws-actions/configure-aws-credentials@v4
+          with:
+            role-to-assume: arn:aws:iam::872952850570:role/GitHubActionsECRPush
+            aws-region: ${{ env.AWS_REGION }}
       - name: Deploy container via SSM
         shell: bash
         run: |
