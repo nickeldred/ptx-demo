@@ -65,67 +65,67 @@ jobs:
           with:
             role-to-assume: arn:aws:iam::872952850570:role/GitHubActionsECRPush
             aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy container via SSM
-        shell: bash
-        run: |
-          set -euo pipefail
-          REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-          TAG="${DEPLOY_TAG}"
-          echo "Deploying ${REPO_URI}:${TAG} to ${INSTANCE_ID}"
-          echo "Using secret: ${SECRET_ARN}"
-          PREFIX=$(cat <<EOF
-          AWS_REGION="${AWS_REGION}"
-          AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
-          SECRET_ARN="${SECRET_ARN}"
-          REPO_URI="${REPO_URI}"
-          TAG="${TAG}"
-          EOF
-          )
-          BODY=$(cat <<'EOF'
-          set -euo pipefail
-          # Ensure jq exists
-          if ! command -v jq >/dev/null 2>&1; then
-            (sudo yum -y install jq || sudo dnf -y install jq) >/dev/null 2>&1 || true
-          fi
-          # Login to ECR
-          aws ecr get-login-password --region "${AWS_REGION}" \
-          | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          # Fetch DB creds from Secrets Manager (runs ON THE INSTANCE)
-          SECRET_JSON=$(aws secretsmanager get-secret-value \
-          --region "${AWS_REGION}" --secret-id "${SECRET_ARN}" \
-          --query SecretString --output text)
-          DB_USER=$(echo "$SECRET_JSON" | jq -r .username)
-          DB_PASS=$(echo "$SECRET_JSON" | jq -r .password)
-          DB_HOST=$(echo "$SECRET_JSON" | jq -r .host)
-          # Pull new image and restart container
-          docker pull "${REPO_URI}:${TAG}"
-          docker rm -f ptx-demo || true
-          docker run -d --name ptx-demo --restart unless-stopped -p 5000:80 \
-          -e DB_HOST="$DB_HOST" -e DB_USER="$DB_USER" -e DB_PASS="$DB_PASS" -e DB_NAME="farm" \
-          "${REPO_URI}:${TAG}"
-          EOF
-          )
-          CMDS="${PREFIX}
-          ${BODY}"
-          # Wrap into proper JSON for SSM and send
-          PARAMS_JSON=$(jq -Rn --arg c "$CMDS" '{commands: [$c]}')
-          MD_ID=$(aws ssm send-command \
-          --instance-ids "${INSTANCE_ID}" \
-          --document-name "AWS-RunShellScript" \
-          --comment "Deploy ptx-demo with Secrets Manager env" \
-          --parameters "$PARAMS_JSON" \
-          --cli-binary-format raw-in-base64-out \
-          --query "Command.CommandId" --output text)
-          echo "CommandId=$CMD_ID"
-          for i in {1..30}; do
-            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --query "Status" --output text || true)
-            echo "SSM status: $STATUS"
-            if [[ "$STATUS" == "Success" ]]; then exit 0; fi
-            if [[ "$STATUS" == "Cancelled" || "$STATUS" == "Failed" || "$STATUS" == "TimedOut" ]]; then
-              aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --output text || true
-              exit 1
+        - name: Deploy container via SSM
+          shell: bash
+          run: |
+            set -euo pipefail
+            REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+            TAG="${DEPLOY_TAG}"
+            echo "Deploying ${REPO_URI}:${TAG} to ${INSTANCE_ID}"
+            echo "Using secret: ${SECRET_ARN}"
+            PREFIX=$(cat <<EOF
+            AWS_REGION="${AWS_REGION}"
+            AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
+            SECRET_ARN="${SECRET_ARN}"
+            REPO_URI="${REPO_URI}"
+            TAG="${TAG}"
+            EOF
+            )
+            BODY=$(cat <<'EOF'
+            set -euo pipefail
+            # Ensure jq exists
+            if ! command -v jq >/dev/null 2>&1; then
+              (sudo yum -y install jq || sudo dnf -y install jq) >/dev/null 2>&1 || true
             fi
-            sleep 5
-          done
-          echo "SSM command did not complete in time"
-          exit 1
+            # Login to ECR
+            aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            # Fetch DB creds from Secrets Manager (runs ON THE INSTANCE)
+            SECRET_JSON=$(aws secretsmanager get-secret-value \
+            --region "${AWS_REGION}" --secret-id "${SECRET_ARN}" \
+            --query SecretString --output text)
+            DB_USER=$(echo "$SECRET_JSON" | jq -r .username)
+            DB_PASS=$(echo "$SECRET_JSON" | jq -r .password)
+            DB_HOST=$(echo "$SECRET_JSON" | jq -r .host)
+            # Pull new image and restart container
+            docker pull "${REPO_URI}:${TAG}"
+            docker rm -f ptx-demo || true
+            docker run -d --name ptx-demo --restart unless-stopped -p 5000:80 \
+            -e DB_HOST="$DB_HOST" -e DB_USER="$DB_USER" -e DB_PASS="$DB_PASS" -e DB_NAME="farm" \
+            "${REPO_URI}:${TAG}"
+            EOF
+            )
+            CMDS="${PREFIX}
+            ${BODY}"
+            # Wrap into proper JSON for SSM and send
+            PARAMS_JSON=$(jq -Rn --arg c "$CMDS" '{commands: [$c]}')
+            MD_ID=$(aws ssm send-command \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy ptx-demo with Secrets Manager env" \
+            --parameters "$PARAMS_JSON" \
+            --cli-binary-format raw-in-base64-out \
+            --query "Command.CommandId" --output text)
+            echo "CommandId=$CMD_ID"
+            for i in {1..30}; do
+              STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --query "Status" --output text || true)
+              echo "SSM status: $STATUS"
+              if [[ "$STATUS" == "Success" ]]; then exit 0; fi
+              if [[ "$STATUS" == "Cancelled" || "$STATUS" == "Failed" || "$STATUS" == "TimedOut" ]]; then
+                aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --output text || true
+                exit 1
+              fi
+              sleep 5
+            done
+            echo "SSM command did not complete in time"
+            exit 1
