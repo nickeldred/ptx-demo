@@ -1,8 +1,14 @@
-# Base Image
-FROM nginx:latest
+FROM python:3.12-slim
 
-# App Files
-COPY index.html /usr/share/nginx/html/index.html
+# Install system libs for PyMySQL (pure Python, so this is light)
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Nginx Port 80
+COPY app.py ./
+
+# Health check for ALB target group
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://localhost/health || exit 1
+
 EXPOSE 80
+CMD ["python", "app.py"]

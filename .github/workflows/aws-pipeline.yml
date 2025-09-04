@@ -59,6 +59,7 @@ jobs:
         INSTANCE_ID: "i-0ab55c6ab619982bf"
         # set to "latest" or deploy the exact commit with: sha-${GITHUB_SHA::7}
         DEPLOY_TAG: "latest"
+        SECRETS_ARN: arn:aws:secretsmanager:us-east-1:872952850570:secret:farm-db-creds-cjOCQP
       steps:
         - name: Configure AWS credentials (OIDC)
           uses: aws-actions/configure-aws-credentials@v4
@@ -75,10 +76,24 @@ jobs:
             # Build the script that will run ON the EC2 instance
             CMDS=$(cat <<EOF
             set -euo pipefail
+            if ! command -v jq >/dev/null 2>&1; then
+              (sudo yum -y install jq || sudo dnf -y install jq) >/dev/null 2>&1 || true
+            fi
             aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            # Fetch secrets
+            SECRET_JSON=$(aws secretsmanager get-secret-value --region ${AWS_REGION} --secret-id ${SECRET_ARN} --query SecretString --output text)
+            DB_USER=$(echo "$SECRET_JSON" | jq -r .username)
+            DB_PASS=$(echo "$SECRET_JSON" | jq -r .password)
+            DB_HOST=$(echo "$SECRET_JSON" | jq -r .host)
+            # Pull and start new image
             docker pull ${REPO_URI}:${TAG}
             docker rm -f ptx-demo || true
-            docker run -d --name ptx-demo --restart unless-stopped -p 5000:80 ${REPO_URI}:${TAG}
+            docker run -d --name ptx-demo --restart unless-stopped -p 5000:80 \
+            -e DB_HOST="$DB_HOST" \
+            -e DB_USER="$DB_USER" \
+            -e DB_PASS="$DB_PASS" \
+            -e DB_NAME="farm" \
+            ${REPO_URI}:${TAG}
             EOF
             )
             # Send the command to SSM
