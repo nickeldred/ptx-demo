@@ -31,7 +31,7 @@ def index():
         html.append(f"<li><a href='{r['url']}' target='_blank' rel='noopener'>{r['name']}</a></li>")
     html.append("</ul>")
     html.append("<hr>")
-    html.append("<h2>Resources</h2><h3>GitHub Repo:</h3><div><a href=\"https://github.com/nickeldred/ptx-demo\">https://github.com/nickeldred/ptx-demo</a></div>")
+    html.append("<h2>Resources</h2><h3>GitHub Repo:</h3><div><p>Repo and CI/CD Pipeline / Workflow that builds the Python container, tests, scans, and deploys via SSM on EC2 instance</p><p><a href=\"https://github.com/nickeldred/ptx-demo\">https://github.com/nickeldred/ptx-demo</a></p></div>")
     return "\n".join(html)
 
 @app.route("/health")
