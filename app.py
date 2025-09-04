@@ -33,8 +33,10 @@ def index():
     html.append("<hr>")
     html.append("<h2>Resources</h2>")
     html.append("<h3>GitHub Repo:</h3><p>Repo and CI/CD Pipeline / Workflow that builds the Python container, tests, scans, pushes to ECR and deploys via SSM on EC2 by pulling in latest ECR image.</p><p><a href=\"https://github.com/nickeldred/ptx-demo\">https://github.com/nickeldred/ptx-demo</a></p>")
-    html.append("<h3>Networking:</h3><p>ptx CNAME record points to Application LB's FQDN</p><p>ALB listening on port 80 & 443 in public subnet.  Listeners target port 5000 in private subnet.</p>")
-    html.append("<h3>Infastructure:</h3><p>VPC with public subnet for Application LB and private subnet for EC2 Instance.</p><p>EC2 instance has Docker runtime installed, and connected to a RDS database</p>")
+    html.append("<h3>Networking:</h3><p>ptx CNAME record points to Application LB's FQDN</p><p>ALB listening on port 80 & 443 in public subnet with ACM issued for 443.  Listeners target port 5000 in private subnet.</p>")
+    html.append("<h3>Infastructure:</h3><p>VPC with public subnet for Application LB and private subnet for EC2 Instance and corresponding security groups.</p><p>EC2 instance has Docker runtime installed, and connected to a RDS database</p>")
+    html.append("<h3>Security and Monitoring:</h3><p>CloudWatch</p><p>Control Tower</p>")
+    html.append("<h3>IaC:</h3><p>Terraform Repo</p>")
     return "\n".join(html)
 
 @app.route("/health")
