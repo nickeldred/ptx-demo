@@ -1,3 +1,4 @@
+# Base Image
 FROM python:3.12-slim
 
 # Install system libs for PyMySQL (pure Python, so this is light)
