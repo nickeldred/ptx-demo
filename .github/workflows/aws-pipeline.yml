@@ -24,21 +24,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Build Docker image (local)
+      - name: Build Docker image
         run: |
           docker build -t ${IMAGE_NAME}:build .
-
-      - name: Save image as artifact (tar)
+      - name: Save image
         run: |
           mkdir -p dist
           docker save ${IMAGE_NAME}:build -o dist/${IMAGE_NAME}.tar
-        # Upload once; later jobs download and reuse exactly this image
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: image-tar
-          path: dist/${IMAGE_NAME}.tar
+          path: dist/${{ env.IMAGE_NAME }}.tar
           retention-days: 3
   # --------------------------- TEST/SCAN ---------------------------
   test:
