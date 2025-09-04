@@ -1,131 +1,231 @@
 name: AWS CI/CD Pipeline
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
+  workflow_dispatch:
 permissions:
   id-token: write
   contents: read
+  security-events: write  # for SARIF uploads
 env:
   AWS_REGION: us-east-1
-  AWS_ACCOUNT_ID: 872952850570
+  AWS_ACCOUNT_ID: "872952850570"
   ECR_REPO: ptx-demo
   IMAGE_NAME: ptx-demo
+  # Choose deploy tag: either "latest" or commit SHA
+  DEPLOY_TAG: "sha-${{ github.sha }}"
+  # For SSM deploy:
+  INSTANCE_ID: "i-0ab55c6ab619982bf"
+  SECRET_ARN: "arn:aws:secretsmanager:us-east-1:872952850570:secret:farm-db-creds-cjOCQP"
 jobs:
-  build-push:
+  # --------------------------- BUILD ---------------------------
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Build Docker image (local)
+        run: |
+          docker build -t ${IMAGE_NAME}:build .
+
+      - name: Save image as artifact (tar)
+        run: |
+          mkdir -p dist
+          docker save ${IMAGE_NAME}:build -o dist/${IMAGE_NAME}.tar
+        # Upload once; later jobs download and reuse exactly this image
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-tar
+          path: dist/${IMAGE_NAME}.tar
+          retention-days: 3
+  # --------------------------- TEST/SCAN ---------------------------
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image-tar
+          path: dist
+      - name: Load image
+        run: |
+          docker load -i dist/${IMAGE_NAME}.tar
+          docker image ls
+      # --- Security: Python dependency audit ---
+      - name: Python dependency audit (pip-audit)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          if [ -f requirements.txt ]; then
+            pip-audit -r requirements.txt
+          else
+            pip-audit
+          fi
+      # --- Security: Python code scan ---
+      - name: Bandit (Python SAST)
+        run: |
+          pip install bandit
+          bandit -q -r . -ll
+      # --- Security: Dockerfile lint ---
+      - name: Hadolint (Dockerfile lint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          no-fail: false
+      # --- Security: Container vulnerability scan ---
+      - name: Trivy scan local image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_NAME }}:build
+          format: sarif
+          output: trivy-results.sarif
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'   # fail on HIGH/CRITICAL
+      - name: Upload Trivy SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+      # --- Optional: SBOM for the built image ---
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_NAME }}:build
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+  # --------------------------- DEPLOY (Push+Pull) ---------------------------
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      id-token: write
+      contents: read
+      security-events: write
+    steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::872952850570:role/GitHubActionsECRPush
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/GitHubActionsECRPush
           aws-region: ${{ env.AWS_REGION }}
       - name: Ensure ECR repo exists (idempotent)
-        run: >
-          aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null
-          2>&1 || \
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true
       - name: Login to Amazon ECR
-        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Build Docker image
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image-tar
+          path: dist
+      - name: Load & tag image for ECR
+        shell: bash
         run: |
-          docker build -t $IMAGE_NAME:latest .
+          set -euo pipefail
+          docker load -i dist/${IMAGE_NAME}.tar
+          REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          # tag we decided to use for deployment
+          TAG="${DEPLOY_TAG/sha-/${SHORT_SHA}}"
+          # If DEPLOY_TAG is literal "latest", preserve that
+          if [[ "${DEPLOY_TAG}" == "latest" ]]; then TAG="latest"; fi
+          echo "REPO_URI=${REPO_URI}" >> $GITHUB_ENV
+          echo "TAG=${TAG}" >> $GITHUB_ENV
+          docker tag "${IMAGE_NAME}:build" "${REPO_URI}:latest"
+          docker tag "${IMAGE_NAME}:build" "${REPO_URI}:sha-${SHORT_SHA}"
       - name: Push to ECR
         shell: bash
         run: |
           set -euo pipefail
-          REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-          GIT_SHA_SHORT="${GITHUB_SHA::7}"
-          echo "Using REPO_URI=$REPO_URI"
-          docker tag "$IMAGE_NAME:latest" "$REPO_URI:latest"
-          docker tag "$IMAGE_NAME:latest" "$REPO_URI:sha-$GIT_SHA_SHORT"
-          docker push "$REPO_URI:latest"
-          docker push "$REPO_URI:sha-$GIT_SHA_SHORT"
-  deploy:
-      needs: build-push
-      runs-on: ubuntu-latest
-      permissions:
-        id-token: write
-        contents: read
-      env:
-        AWS_REGION: us-east-1
-        AWS_ACCOUNT_ID: "872952850570"
-        ECR_REPO: ptx-demo
-        IMAGE_NAME: ptx-demo
-        INSTANCE_ID: "i-0ab55c6ab619982bf"
-        # set to "latest" or deploy the exact commit with: sha-${GITHUB_SHA::7}
-        DEPLOY_TAG: "latest"
-        SECRET_ARN: arn:aws:secretsmanager:us-east-1:872952850570:secret:farm-db-creds-cjOCQP
-      steps:
-        - name: Configure AWS credentials (OIDC)
-          uses: aws-actions/configure-aws-credentials@v4
-          with:
-            role-to-assume: arn:aws:iam::872952850570:role/GitHubActionsECRPush
-            aws-region: ${{ env.AWS_REGION }}
-        - name: Deploy container via SSM
-          shell: bash
-          run: |
-            set -euo pipefail
-            REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-            TAG="${DEPLOY_TAG}"
-            echo "Deploying ${REPO_URI}:${TAG} to ${INSTANCE_ID}"
-            echo "Using secret: ${SECRET_ARN}"
-            PREFIX=$(cat <<EOF
-            AWS_REGION="${AWS_REGION}"
-            AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
-            SECRET_ARN="${SECRET_ARN}"
-            REPO_URI="${REPO_URI}"
-            TAG="${TAG}"
-            EOF
-            )
-            BODY=$(cat <<'EOF'
-            set -euo pipefail
-            # Ensure jq exists
-            if ! command -v jq >/dev/null 2>&1; then
-              (sudo yum -y install jq || sudo dnf -y install jq) >/dev/null 2>&1 || true
-            fi
-            # Login to ECR
-            aws ecr get-login-password --region "${AWS_REGION}" \
-            | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-            # Fetch DB creds from Secrets Manager (runs ON THE INSTANCE)
-            SECRET_JSON=$(aws secretsmanager get-secret-value \
-            --region "${AWS_REGION}" --secret-id "${SECRET_ARN}" \
-            --query SecretString --output text)
-            DB_USER=$(echo "$SECRET_JSON" | jq -r .username)
-            DB_PASS=$(echo "$SECRET_JSON" | jq -r .password)
-            DB_HOST=$(echo "$SECRET_JSON" | jq -r .host)
-            # Pull new image and restart container
-            docker pull "${REPO_URI}:${TAG}"
-            docker rm -f ptx-demo || true
-            docker run -d --name ptx-demo --restart unless-stopped -p 5000:80 \
-            -e DB_HOST="$DB_HOST" -e DB_USER="$DB_USER" -e DB_PASS="$DB_PASS" -e DB_NAME="farm" \
-            "${REPO_URI}:${TAG}"
-            EOF
-            )
-            CMDS="${PREFIX}
-            ${BODY}"
-            # Wrap into proper JSON for SSM and send
-            PARAMS_JSON=$(jq -Rn --arg c "$CMDS" '{commands: [$c]}')
-            CMD_ID=$(aws ssm send-command \
+          echo "Pushing ${REPO_URI}:latest and ${REPO_URI}:sha-${GITHUB_SHA::7}"
+          docker push "${REPO_URI}:latest"
+          docker push "${REPO_URI}:sha-${GITHUB_SHA::7}"
+      - name: Deploy to EC2 via SSM
+        shell: bash
+        run: |
+          set -eo pipefail
+          REPO_URI="${REPO_URI}"
+          TAG="${TAG}"
+          echo "Deploying ${REPO_URI}:${TAG} to ${INSTANCE_ID} using secret ${SECRET_ARN}"
+          # Prefix values expanded on runner
+          PREFIX=$(cat <<EOF
+          AWS_REGION="${AWS_REGION}"
+          AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
+          SECRET_ARN="${SECRET_ARN}"
+          REPO_URI="${REPO_URI}"
+          TAG="${TAG}"
+          EOF
+          )
+          # Body runs on the instance (no command substitution on runner)
+          BODY=$(cat <<'EOF'
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            (sudo yum -y install jq || sudo dnf -y install jq) >/dev/null 2>&1 || true
+          fi
+          # ECR login
+          aws ecr get-login-password --region "${AWS_REGION}" \
+          | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          # Fetch DB creds from Secrets Manager (JSON fields: username,password,host,dbname)
+          SECRET_JSON=$(aws secretsmanager get-secret-value \
+          --region "${AWS_REGION}" --secret-id "${SECRET_ARN}" \
+          --query SecretString --output text)
+          DB_USER=$(echo "$SECRET_JSON" | jq -r .username)
+          DB_PASS=$(echo "$SECRET_JSON" | jq -r .password)
+          DB_HOST=$(echo "$SECRET_JSON" | jq -r .host)
+          # Pull & restart container
+          docker pull "${REPO_URI}:${TAG}"
+          docker rm -f ptx-demo || true
+          docker run -d --name ptx-demo --restart unless-stopped -p 5000:80 \
+          -e DB_HOST="$DB_HOST" -e DB_USER="$DB_USER" -e DB_PASS="$DB_PASS" -e DB_NAME="farm" \
+          -e BUILD_TAG="${TAG}" -e ALB_DNS="ptx.nickeldred.com" \
+          "${REPO_URI}:${TAG}"
+          EOF
+          )
+          CMDS="${PREFIX}
+          ${BODY}"
+          # Build JSON for SSM parameters
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+          PARAMS_JSON=$(jq -Rn --arg c "$CMDS" '{commands: [$c]}')
+          echo "SSM parameters JSON prepared."
+          CMD_ID=$(aws ssm send-command \
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy ptx-demo with Secrets Manager env" \
             --parameters "$PARAMS_JSON" \
             --cli-binary-format raw-in-base64-out \
-            --query "Command.CommandId" --output text)
-            echo "CommandId=$CMD_ID"
-            for i in {1..30}; do
-              STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --query "Status" --output text || true)
-              echo "SSM status: $STATUS"
-              if [[ "$STATUS" == "Success" ]]; then exit 0; fi
-              if [[ "$STATUS" == "Cancelled" || "$STATUS" == "Failed" || "$STATUS" == "TimedOut" ]]; then
-                aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --output text || true
-                exit 1
-              fi
-              sleep 5
-            done
-            echo "SSM command did not complete in time"
-            exit 1
+            --query "Command.CommandId" --output text) || { echo "send-command failed"; exit 1; }
+
+          if [[ -z "$CMD_ID" || "$CMD_ID" == "None" ]]; then
+            echo "Failed to obtain CommandId"; exit 1
+          fi
+
+          echo "CommandId=$CMD_ID"
+
+          # Poll
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --query "Status" --output text || true)
+            echo "SSM status: $STATUS"
+            if [[ "$STATUS" == "Success" ]]; then exit 0; fi
+            if [[ "$STATUS" == "Cancelled" || "$STATUS" == "Failed" || "$STATUS" == "TimedOut" ]]; then
+              echo "Invocation details:"
+              aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --output text || true
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "SSM command did not complete in time"
+          exit 1
