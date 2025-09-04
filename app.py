@@ -26,7 +26,7 @@ def index():
 
     html = ["<!doctype html><meta charset='utf-8'><title>AGCO PTx Demo – Data Sources</title>",
             "<style>body{font-family:system-ui,Arial;padding:2rem;max-width:720px;margin:auto;background:#0f172a;color:#e2e8f0}a{color:#93c5fd}</style>",
-            "<h1>AGCO PTx Demo</h1><h2>Public Data Sources</h2><ul>"]
+            "<h1>AGCO PTx Demo</h1><h2>Public Data Sources</h2><p>Retrieved from RDS DB</p><ul>"]
     for r in rows:
         html.append(f"<li><a href='{r['url']}' target='_blank' rel='noopener'>{r['name']}</a></li>")
     html.append("</ul>")
