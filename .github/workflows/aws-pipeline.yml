@@ -13,7 +13,7 @@ env:
   ECR_REPO: ptx-demo
   IMAGE_NAME: ptx-demo
 jobs:
-  build-and-push:
+  build-push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,7 +27,6 @@ jobs:
         run: >
           aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null
           2>&1 || \
-
           aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true
       - name: Login to Amazon ECR
         id: ecr-login
@@ -39,19 +38,71 @@ jobs:
         run: >
           REPO_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION
           }}.amazonaws.com/${{ env.ECR_REPO }}
-
           GIT_SHA_SHORT=${{ github.sha }} # full SHA here
-
           GIT_SHA_SHORT=${GIT_SHA_SHORT::7} # shorten to 7
-
           echo "REPO_URI=$REPO_URI" >> $GITHUB_ENV
-
           echo "GIT_SHA_SHORT=$GIT_SHA_SHORT" >> $GITHUB_ENV
-
           docker tag $IMAGE_NAME:latest $REPO_URI:latest
-
           docker tag $IMAGE_NAME:latest $REPO_URI:sha-$GIT_SHA_SHORT
       - name: Push to ECR
         run: |
           docker push "$REPO_URI:latest"
           docker push "$REPO_URI:sha-$GIT_SHA_SHORT"
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: us-east-1
+      AWS_ACCOUNT_ID: "872952850570"
+      ECR_REPO: ptx-demo
+      IMAGE_NAME: ptx-demo
+      INSTANCE_ID: i-0ab55c6ab619982bf
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::872952850570:role/GitHubActionsECRPush
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy container via SSM
+        id: ssm
+        shell: bash
+        run: >
+          set -euo pipefail
+          REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+          GIT_SHA_SHORT="${GITHUB_SHA::7}" TAG="latest"  # or
+          "sha-${GIT_SHA_SHORT}"
+          # Commands to run
+          read -r -d '' CMDS <<'BASH' set -euo pipefail
+          # Login to ECR
+          aws ecr get-login-password --region ${AWS_REGION} \ | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+          # Pull image
+          docker pull ${REPO_URI}:${TAG}
+          # Stop & remove existing container if present
+          docker rm -f ptx-demo || true
+          # Run new container
+          docker run -d --name ptx-demo --restart unless-stopped -p 5000:80 ${REPO_URI}:${TAG}
+          BASH
+
+          # Send the command CMD_ID=$(aws ssm send-command \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy ptx-demo" \
+            --parameters commands="$CMDS" \
+            --query "Command.CommandId" --output text)
+
+          echo "CommandId=$CMD_ID"
+          # Poll for result for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --query "Status" --output text || true)
+            echo "SSM status: $STATUS"
+            if [[ "$STATUS" == "Success" ]]; then exit 0; fi
+            if [[ "$STATUS" == "Cancelled" || "$STATUS" == "Failed" || "$STATUS" == "TimedOut" ]]; then
+              aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${INSTANCE_ID}" --output text || true
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "SSM command did not complete in time"
+          exit 1
