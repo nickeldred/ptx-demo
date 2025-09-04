@@ -34,21 +34,17 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -t $IMAGE_NAME:latest .
-      - name: Tag image
-        run: >
-          REPO_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION
-          }}.amazonaws.com/${{ env.ECR_REPO }}
-          GIT_SHA_SHORT=${{ github.sha }} # full SHA here
-          GIT_SHA_SHORT=${GIT_SHA_SHORT::7} # shorten to 7
-          echo "GIT_SHA_SHORT=$GIT_SHA_SHORT" >> $GITHUB_ENV
-          docker tag $IMAGE_NAME:latest $REPO_URI:latest
-          docker tag $IMAGE_NAME:latest $REPO_URI:sha-$GIT_SHA_SHORT
       - name: Push to ECR
+        shell: bash
         run: |
-          REPO_URI=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION
-          }}.amazonaws.com/${{ env.ECR_REPO }}
-          docker push $REPO_URI:latest
-          docker push $REPO_URI:sha-$GIT_SHA_SHORT
+          set -euo pipefail
+          REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+          GIT_SHA_SHORT="${GITHUB_SHA::7}"
+          echo "Using REPO_URI=$REPO_URI"
+          docker tag "$IMAGE_NAME:latest" "$REPO_URI:latest"
+          docker tag "$IMAGE_NAME:latest" "$REPO_URI:sha-$GIT_SHA_SHORT"
+          docker push "$REPO_URI:latest"
+          docker push "$REPO_URI:sha-$GIT_SHA_SHORT"
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
