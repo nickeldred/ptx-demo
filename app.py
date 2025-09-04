@@ -33,6 +33,7 @@ def index():
     html.append("<hr>")
     html.append("<h2>Resources</h2>")
     html.append("<h3>GitHub Repo:</h3><p>Repo and CI/CD Pipeline / Workflow that builds the Python container, pushes to ECR, and deploys via SSM on EC2 by pulling in latest ECR image.</p><p><a href=\"https://github.com/nickeldred/ptx-demo\">https://github.com/nickeldred/ptx-demo</a></p>")
+    html.append("<h3>Video Demo:</h3><p><a href=\"https://www.veed.io/view/a009900c-256e-47de-ab58-555c1eeb46d5?panel=share\">https://www.veed.io/view/a009900c-256e-47de-ab58-555c1eeb46d5?panel=share</a></p>)
     html.append("<h2>Setup</h2>")
     html.append("<h3>Networking</h3>")
     html.append("<ul>")
