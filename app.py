@@ -25,7 +25,7 @@ def index():
         return Response(f"DB error: {e}", status=500, mimetype="text/plain")
 
     html = ["<!doctype html><meta charset='utf-8'><title>AGCO PTx Demo – Ag Data Sources</title>",
-            "<style>body{font-family:system-ui,Arial;padding:2rem;max-width:720px;margin:auto;background:#007190;color:#e2e8f0}a{color:#93c5fd}</style>",
+            "<style>body{font-family:system-ui,Arial;padding:2rem;max-width:720px;margin:auto;background:#0f172a;color:#e2e8f0}a{color:#93c5fd}</style>",
             "<h1>AGCO PTx Demo</h1><h2>Public Data Sources</h2><p>Retrieved from RDS DB</p><ul>"]
     for r in rows:
         html.append(f"<li><a href='{r['url']}' target='_blank' rel='noopener'>{r['name']}</a></li>")
