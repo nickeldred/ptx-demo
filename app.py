@@ -24,7 +24,7 @@ def index():
     except Exception as e:
         return Response(f"DB error: {e}", status=500, mimetype="text/plain")
 
-    html = ["<!doctype html><meta charset='utf-8'><title>PTX Demo – Data Sources</title>",
+    html = ["<!doctype html><meta charset='utf-8'><title>AGCO PTx Demo – Data Sources</title>",
             "<style>body{font-family:system-ui,Arial;padding:2rem;max-width:720px;margin:auto;background:#0f172a;color:#e2e8f0}a{color:#93c5fd}</style>",
             "<h1>Public Data Sources</h1><ul>"]
     for r in rows:
